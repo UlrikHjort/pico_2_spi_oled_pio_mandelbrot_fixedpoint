@@ -1,0 +1,56 @@
+;          PICO2 RISC-V Mandelbrot OLED SPI pio statemachine
+; 
+;           Copyright (C) 2025 By Ulrik Hørlyk Hjort
+
+.program spi_tx
+.side_set 1 opt          ; side-set for clock pin (optional to allow delay)
+
+.wrap_target
+    out pins, 1   side 0 [1]  ; Output bit to MOSI, ensure clock is low, delay
+    nop           side 1 [1]  ; Raise clock high, delay
+.wrap
+
+% c-sdk {
+static inline void spi_tx_program_init(PIO pio, uint sm, uint offset, 
+                                        uint mosi_pin, uint clk_pin, float clk_div) {
+    pio_sm_config c = spi_tx_program_get_default_config(offset);
+    
+    // Configure MOSI pin as output
+    pio_gpio_init(pio, mosi_pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, mosi_pin, 1, true);
+    sm_config_set_out_pins(&c, mosi_pin, 1);
+    
+    // Configure clock pin as side-set output
+    pio_gpio_init(pio, clk_pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, clk_pin, 1, true);
+    sm_config_set_sideset_pins(&c, clk_pin);
+    
+    // Configure shift: autopull, 8 bits, shift left (MSB first)
+    sm_config_set_out_shift(&c, false, true, 8);
+    
+    // Set clock divider
+    sm_config_set_clkdiv(&c, clk_div);
+    
+    // Initialize and enable state machine
+    pio_sm_init(pio, sm, offset, &c);
+    
+    // Ensure clock starts low
+    pio_sm_set_pins_with_mask(pio, sm, 0, (1u << clk_pin));
+    pio_sm_set_pindirs_with_mask(pio, sm, (1u << clk_pin), (1u << clk_pin));
+    
+    pio_sm_set_enabled(pio, sm, true);
+}
+
+
+#include "hardware/pio.h"
+#include "hardware/clocks.h"
+// Calculate clock divider for desired SPI clock frequency
+// For 1us high + 1us low = 2us per bit = 500 kHz SPI clock
+// Each PIO instruction takes (1 + delay) cycles
+// In the program: out takes 2 cycles, nop takes 2 cycles = 4 cycles per bit
+static inline float spi_tx_calc_clk_div(float spi_freq_hz) {
+    float sys_clk = clock_get_hz(clk_sys);
+    // 4 PIO cycles per bit
+    return sys_clk / (spi_freq_hz * 4.0f);
+}
+%}
